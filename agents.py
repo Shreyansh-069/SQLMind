@@ -1,62 +1,62 @@
 # agents.py
-import google.generativeai as genai
+import sqlite3
 import pandas as pd
+import google.generativeai as genai
 
-def generate_or_heal_sql(
-    user_query: str, schema: str, error_context: str = ""
-) -> str:
-    """Translates natural language into SQLite code using Gemini's GenerativeModel structure."""
-    system_prompt = (
-        "You are an expert autonomous Data Analyst Agent specializing in SQLite.\n"
-        "Convert the user's question into perfectly valid SQL code targeting the 'jobs' table.\n\n"
-        "CRITICAL METRIC CONVERSION RULES:\n"
-        "1. Compensation is stored as an annual float in Lakhs in the 'salary_lpa' column.\n"
-        "   - If the user asks for thousands or raw numbers (e.g., 'more than 30,000', '> 50000', 'above 30k'), you MUST convert it to Lakhs Per Annum.\n"
-        "   - Examples: 'salary > 30000' translates to -> salary_lpa > 0.3\n"
-        "   - Examples: 'salary > 50000' translates to -> salary_lpa > 0.5\n"
-        "   - Examples: '15 LPA' or '15 Lakhs' translates to -> salary_lpa > 15.0\n"
-        "2. Geolocation filters run against the 'city' column. Treat 'Bangalore' and 'Bengaluru' as 'Bangalore'. Always use: LOWER(city) LIKE '%bangalore%'\n"
-        "3. Filter programming stack keywords safely: LOWER(skills_required) LIKE '%python%'\n\n"
-        "OUTPUT FORMATTING:\n"
-        "Return ONLY the raw SQL query string. Never wrap it in markdown block characters (```sql) or add explanations."
-    )
+DB_PATH = "analytics.db"
 
-    user_context = f"Schema Blueprint:\n{schema}\n\nQuery History/Corrections:\n{error_context}\n\nUser Question: {user_query}"
+def query_job_database(sql_query: str) -> str:
+    """
+    Executes a raw SQLite query against the 'jobs' database table containing job market information.
+    Use this tool whenever the user asks for metrics, lists, counts, or data lookups regarding jobs.
+    Returns the results as a string representation of data rows.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(sql_query, conn)
+        conn.close()
+        
+        if df.empty:
+            return "Query executed successfully, but 0 matching records were found."
+        
+        # Keep a global reference in Streamlit so the UI can capture and display the interactive table
+        import streamlit as st
+        st.session_state["last_active_dataframe"] = df
+        st.session_state["last_active_sql"] = sql_query
+        
+        return df.to_string(index=False)
+    except Exception as err:
+        return f"Database Error: {str(err)}. Please correct your SQL syntax and try again."
 
-    # Target gemini-1.5-flash for maximum generation speed and stability
-    model = genai.GenerativeModel(
-        model_name="gemini-3.1-flash-lite",
-        system_instruction=system_prompt,
-        generation_config={"temperature": 0.0}  # Strictly deterministic code generation
-    )
-
-    response = model.generate_content(user_context)
+def initialize_agentic_chat(schema_blueprint: str):
+    """Initializes a stateful Gemini Chat Session armed with database tools and historical memory."""
     
-    clean_sql = (
-        response.text.strip()
-        .replace("```sql", "")
-        .replace("```", "")
-        .strip("`")
-        .strip()
+    system_instruction = (
+        "You are an expert Executive AI Data Agent specializing in the Indian Job Market.\n"
+        "You have direct access to a local SQLite database table called 'jobs' via the 'query_job_database' tool.\n\n"
+        
+        "CORE CAPABILITIES:\n"
+        "1. CHITCHAT/GENERAL CONVERSATION: If the user greets you, says thank you, or asks general questions, respond warmly and professionally without calling any tools.\n"
+        "2. DATA RETRIEVAL: When asked about job counts, salaries, locations, or skills, translate the question into a valid SQLite query and invoke 'query_job_database'.\n"
+        "3. FOLLOW-UPS & COMPARISONS: Maintain strict memory of the conversation. If a user asks to 'compare the first two' or asks follow-up details about a previous result, use your memory of the previous response to analyze and structure a comparative summary table or breakdown.\n\n"
+        
+        "CRITICAL SQL RULES:\n"
+        "- The table name is 'jobs'.\n"
+        "- Compensation is stored in Lakhs Per Annum in the 'salary_lpa' column (e.g., 15 LPA is written as 15.0). Always convert thousands/raw text numbers appropriately.\n"
+        "- Treat 'Bangalore' and 'Bengaluru' interchangeably using: LOWER(city) LIKE '%bangalore%'\n"
+        "- Filter skills using: LOWER(skills_required) LIKE '%python%'\n\n"
+        
+        "OUTPUT FORMATTING:\n"
+        "Present your final answer to the user in clean, professional markdown with clear bullet points where helpful."
     )
-    return clean_sql
 
-def summarize_data_insights(
-    user_query: str, executed_sql: str, data_df: pd.DataFrame
-) -> str:
-    """Generates concise executive analytics insights using the Gemini pipeline."""
-    system_prompt = (
-        "You are a professional business intelligence executive.\n"
-        "Review the query and results summary to provide a clear, high-level 2-bullet point overview of findings."
-    )
-
-    context = f"Question: {user_query}\nSQL: {executed_sql}\nData Snippet:\n{data_df.head(5).to_string()}"
-
+    # Initialize model with the live executable tool attached
     model = genai.GenerativeModel(
         model_name="gemini-3.1-flash-lite",
-        system_instruction=system_prompt,
-        generation_config={"temperature": 0.3}
+        tools=[query_job_database],
+        system_instruction=system_instruction,
+        generation_config={"temperature": 0.2}
     )
 
-    response = model.generate_content(context)
-    return response.text.strip()
+    # start_chat returns a stateful session handler that automatically manages conversation memory tokens
+    return model.start_chat(enable_automatic_function_calling=True)
