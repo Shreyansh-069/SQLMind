@@ -1,189 +1,196 @@
 # app.py
-import streamlit as st
-import pandas as pd
-import plotly.express as px
 import time
+import agents
+import core
+import plotly.express as px
+import streamlit as st
 
-# Import custom specialized layers
-from schema_manager import get_db_schema
-import sql_agent
-import interpreter_agent
-from config import run_sql_query, get_gemini_client
+st.set_page_config(page_title="SelectAI Analytics Engine", layout="wide")
+st.title("📊 SelectAI - Executive Job Market Analytics")
 
-st.set_page_config(page_title="Enterprise SQL Agent Analytics", layout="wide")
-st.title("📊 Enterprise Data Analyst Dashboard")
-
-# Ingest metadata definitions using the Schema Manager component
-try:
-    schema_blueprint = get_db_schema()
-except Exception:
-    schema_blueprint = "Please ensure Chinook.db is present in the project folder."
+schema_blueprint = core.get_db_schema()
 
 # --- Sidebar Layout ---
 with st.sidebar:
     st.header("🔑 Authentication")
     user_api_key = st.text_input(
-        "Enter your Gemini API Key:", 
-        type="password", 
-        placeholder="AIzaSy..."
+        "Enter your Gemini API Key:", type="password", placeholder="AIzaSy..."
     )
     st.markdown("---")
     
-    # PREMIUM MOVE: Quick Sample Prompts
-    st.header("💡 Suggested Questions")
-    st.markdown("Click one to copy-paste into the input box:")
-    st.code("Jobs in banglore with salary more than 30000")
-    st.code("Top 5 highest paying job titles in the dataset")
-    st.code("Count of job openings per state")
+    st.header("🔌 Presentation Controls")
+    demo_mode = st.checkbox("Enable Offline Demo Mode", value=False, 
+                            help="Bypasses external API networks completely using local matching rules.")
     
     st.markdown("---")
-    st.header("🗄️ System Metadata Map")
-    with st.expander("View Database Schema Blueprint"):
+    st.header("💡 Explore Suggested Queries")
+    st.markdown("Select or type one of these phrases:")
+    st.code("Remote Python Developer roles with salary over 15 LPA")
+    st.code("Top 5 highest paying companies in Bangalore")
+    st.code("Count of job openings per experience level")
+    st.code("Average salary LPA for Senior (6-10 yrs) positions")
+    
+    st.markdown("---")
+    with st.expander("View Active SQL Table Columns"):
         st.text(schema_blueprint)
 
-# Question Input
-user_query = st.text_input(
-    "Ask your data a question in plain English:", 
-    placeholder="e.g., Show me the top 5 highest paying job titles",
-    disabled=not user_api_key
-)
+# --- Batched Input Form Layout ---
+with st.form(key="agent_analytics_form"):
+    selected_sample = st.selectbox(
+        "Quick-Select a Sample Query:",
+        ["", 
+         "Remote Python Developer roles with salary over 15 LPA",
+         "Top 5 highest paying companies in Bangalore",
+         "Count of job openings per experience level",
+         "Average salary LPA for Senior (6-10 yrs) positions"]
+    )
+    
+    user_query = st.text_input(
+        "Or type custom query here:",
+        value=selected_sample if selected_sample else "",
+        placeholder="e.g., Show me Remote jobs with salary over 20 LPA",
+    )
+    submit_button = st.form_submit_button(label="🚀 Run Agent Analysis")
 
-if user_query:
-    if not user_api_key:
-        st.error("Please enter your Gemini API key in the sidebar before proceeding.")
-    else:
-        # Initialize client and inject into background agents silently
-        client_instance = get_gemini_client(user_api_key)
-        sql_agent.client = client_instance
-        interpreter_agent.client = client_instance
+# Execution block begins only when the user deliberately submits the form
+if submit_button and user_query:
+    
+    max_retries = 3
+    success = False
+    final_df = None
+    executed_sql = ""
+    insights = ""
+    error_context = ""
+
+    st.markdown("---")
+    st.subheader("🤖 AGENT LIFECYCLE CHOREOGRAPHY :")
+
+    # PATH A: OFFLINE DEMO MODE RUNPATH
+    if demo_mode:
+        st.success("⚡ **Offline Demo Mode Active:** Bypassed external API networks completely.")
+        mock_sql, mock_insights = core.get_mock_query_mapping(user_query)
         
-        # Internal Loop State Management
-        max_retries = 3
-        success = False
-        final_df = None
-        executed_sql = ""
-        error_context_tracker = ""
+        if mock_sql:
+            executed_sql = mock_sql
+            insights = mock_insights
+            db_status, final_df = core.run_sql_query(executed_sql)
+            if db_status == "SUCCESS" and not final_df.empty:
+                success = True
+        else:
+            st.warning("⚠️ This custom phrase is not pre-mapped in Offline Mode. Uncheck 'Enable Offline Demo Mode' to run live AI queries.")
+
+    # PATH B: LIVE GEMINI EXECUTION RUNPATH
+    else:
+        if not user_api_key:
+            st.error("Please provide an operational Gemini API key in the sidebar layout to run live mode.")
+        else:
+            # Initialize global Gemini configurations
+            core.configure_gemini_client(user_api_key)
+            
+            with st.status("Spinning up Agent Pipeline...", expanded=True) as status:
+                for attempt in range(1, max_retries + 1):
+                    status.update(label=f"⏳ Executing Multi-Agent Loop {attempt}/{max_retries}...")
+                    
+                    with st.spinner("SQL Agent is writing query structure..."):
+                        try:
+                            executed_sql = agents.generate_or_heal_sql(
+                                user_query, schema_blueprint, error_context
+                            )
+                            st.write(f"🧠 **SQL Agent (Attempt {attempt}):** Compiled targeted query logic.")
+                        except Exception as err:
+                            st.write(f"❌ **API Connection Error:** {err}")
+                            status.update(label="Pipeline terminated.", state="error")
+                            break
+                    
+                    with st.spinner("Querying analytics database engine..."):
+                        db_status, result = core.run_sql_query(executed_sql)
+                    
+                    if db_status == "SUCCESS":
+                        if result.empty:
+                            st.write("ℹ️ **Database Engine:** Query ran successfully, but returned 0 records.")
+                            final_df = result
+                            success = True
+                            break
+                        else:
+                            st.write(f"✅ **Database Engine:** Retrieved {len(result)} matching listings.")
+                            final_df = result
+                            success = True
+                            break
+                    else:
+                        st.write(f"❌ **Database Engine Error:** Invalid Syntax.")
+                        error_context = f"The expression '{executed_sql}' crashed. Technical reason: {result}"
+                        time.sleep(1)
+
+                if success and final_df is not None:
+                    status.update(label="✨ Operational Metrics Extracted!", state="complete", expanded=False)
+
+    # --- RENDERING ENGINE LAYER ---
+    if success and final_df is not None and not final_df.empty:
+        st.markdown("---")
+        
+        # Dynamic Metric Scorecards
+        st.subheader("📊 EXECUTIVE SNAPSHOT METRICS :")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Postings Found", f"{len(final_df)} vacancies")
+        
+        if "salary_lpa" in final_df.columns and not final_df["salary_lpa"].isnull().all():
+            m2.metric("Peak Compensation", f"₹{final_df['salary_lpa'].max():.1f} LPA")
+            m3.metric("Average Market Pay", f"₹{final_df['salary_lpa'].mean():.1f} LPA")
+        elif "max_salary" in final_df.columns:
+            m2.metric("Peak Compensation", f"₹{final_df['max_salary'].max():.1f} LPA")
+            m3.metric("Average Market Pay", f"₹{final_df['max_salary'].mean():.1f} LPA")
+        elif "avg_salary_lpa" in final_df.columns:
+            m2.metric("Overall Average Pay", f"₹{final_df['avg_salary_lpa'].mean():.1f} LPA")
+        else:
+            m2.metric("Peak Compensation", "N/A")
+            m3.metric("Average Market Pay", "N/A")
+            
+        st.markdown("---")
+        
+        # Showcase the Business Summary Insights
+        st.subheader("💡 EXECUTIVE SUMMARY INSIGHTS :")
+        if not insights and not demo_mode:
+            with st.spinner("Interpreter Agent is evaluating matrix for insights..."):
+                try:
+                    insights = agents.summarize_data_insights(
+                        user_query, executed_sql, final_df
+                    )
+                except Exception as insight_err:
+                    insights = f"Data table populated successfully! Summary rendering skipped: {insight_err}"
+        st.info(insights)
         
         st.markdown("---")
-        st.subheader("🤖 AGENT LIFECYCLE PROGRESS :")
+        st.subheader("📋 LOGICAL SQL PATH UTILIZED :")
+        st.code(executed_sql, language="sql")
         
-        # Live-updating container for multi-agent choreography
-        with st.status("Initializing Multi-Agent Data Pipeline...", expanded=True) as status:
-            for attempt in range(1, max_retries + 1):
-                status.update(label=f"⏳ Running Loop Attempt {attempt} of {max_retries}...")
-                
-                with st.spinner(f"SQL Agent is evaluating metadata structure and generating code..."):
-                    try:
-                        executed_sql = sql_agent.generate_or_heal_sql(user_query, schema_blueprint, error_context_tracker)
-                        st.write(f"🧠 **SQL Agent (Attempt {attempt}):** Generated optimized SQL statement structure.")
-                    except Exception as api_err:
-                        st.write(f"❌ **API Error:** Core validation crashed: {str(api_err)}")
-                        status.update(label="Pipeline terminated due to connection error.", state="error")
-                        break
-                
-                with st.spinner(f"Database Engine is executing generated query against data infrastructure..."):
-                    db_status, result = run_sql_query(executed_sql)
-                
-                if db_status == "SUCCESS":
-                    if result.empty:
-                        st.write(f"⚠️ **Execution Notice:** Query executed safely but returned 0 records.")
-                        st.write(f"🩹 **Self-Healing Loop:** Retrying with fallback string matching configurations...")
-                        error_context_tracker = (
-                            f"\nYour previous query: '{executed_sql}' returned 0 rows.\n"
-                            "CRITICAL CORRECTION: Use strictly LOWER(location) LIKE '%bengaluru%' for location filters.\n"
-                            "Ensure case-insensitive operations using LOWER()."
-                        )
-                        final_df = result
-                        time.sleep(1)
-                    else:
-                        st.write(f"✅ **Database Engine:** Data matrix successfully compiled ({len(result)} rows discovered).")
-                        final_df = result
-                        success = True
-                        break
-                else:
-                    st.write(f"❌ **Database Error:** Execution crash detected.")
-                    st.write(f"🩹 **Self-Healing Loop:** Feeding context back to SQL Agent to repair syntax...")
-                    error_context_tracker = f"\nYour previous query: '{executed_sql}' failed with database engine error: '{result}'."
-                    time.sleep(1)
-
-            if success and final_df is not None and not final_df.empty:
-                status.update(label="✨ Process Complete! All data metrics extracted successfully.", state="complete", expanded=False)
-            else:
-                status.update(label="🦖 Query execution finished completely but rows are 0.", state="complete", expanded=False)
-                success = True
-
-        # --- CLEAN RENDERING LAYER ---
-        if success and final_df is not None and not final_df.empty:
-            st.markdown("---")
+        st.markdown("---")
+        st.subheader("🗄️ PARSED RESULTS MATRIX :")
+        st.dataframe(final_df, use_container_width=True)
+        
+        st.markdown("---")
+        numeric_cols = final_df.select_dtypes(include=["number"]).columns.tolist()
+        text_cols = final_df.select_dtypes(include=["object"]).columns.tolist()
+        
+        # High contrast dark-mode charts
+        if len(final_df) > 0:
+            st.subheader("📈 GRAPHICAL ANALYSIS :")
             
-            # PREMIUM MOVE: Dynamic KPI Cards
-            st.subheader("📊 SNAPSHOT METRICS :")
-            m_col1, m_col2, m_col3 = st.columns(3)
-            with m_col1:
-                st.metric(label="Total Postings Found", value=f"{len(final_df)} roles")
-            with m_col2:
-                if 'monthly_salary' in final_df.columns and not final_df['monthly_salary'].isnull().all():
-                    max_sal = int(final_df['monthly_salary'].max())
-                    st.metric(label="Highest Monthly Salary Listed", value=f"₹{max_sal:,}")
-                else:
-                    st.metric(label="Highest Monthly Salary Listed", value="N/A (Text-based column)")
-            with m_col3:
-                if 'monthly_salary' in final_df.columns and not final_df['monthly_salary'].isnull().all():
-                    avg_sal = int(final_df['monthly_salary'].mean())
-                    st.metric(label="Average Monthly Salary", value=f"₹{avg_sal:,}")
-                else:
-                    st.metric(label="Average Monthly Salary", value="N/A")
-
-            st.markdown("---")
+            x_ax = text_cols[0] if text_cols else final_df.columns[0]
+            y_ax = numeric_cols[0] if numeric_cols else final_df.columns[-1]
             
-            # PREMIUM MOVE: Showcase the Interpreter Agent
-            st.subheader("💡 EXECUTIVE INSIGHTS ANALYSIS :")
-            with st.spinner("Interpreter Agent is analyzing results matrix to draft summary..."):
-                try:
-                    ai_summary = interpreter_agent.summarize_data_insights(user_query, executed_sql, final_df)
-                    st.info(ai_summary)
-                except Exception as e:
-                    st.warning(f"Interpreter Agent was unable to complete summary drafting: {e}")
-
-            st.markdown("---")
+            fig = px.bar(
+                final_df,
+                x=x_ax,
+                y=y_ax,
+                title=f"{y_ax.upper()} ANALYSIS BY {x_ax.upper()}",
+                template="plotly_dark",
+                color=y_ax,
+                color_continuous_scale="Viridis"
+            )
+            st.plotly_chart(fig, use_container_width=True)
             
-            # 1. SQL QUERY SECTION
-            st.subheader("📋 SQL QUERY PATH UTILIZED :")
-            st.code(executed_sql, language="sql")
-            
-            st.markdown("---")
-            
-            # 2. TABLE SECTION
-            st.subheader("🗄️ TABLE RELATED TO THE QUERY :")
-            st.dataframe(final_df, use_container_width=True)
-            
-            st.markdown("---")
-            
-            # 3. CHART SECTION
-            numeric_cols = final_df.select_dtypes(include=['number']).columns.tolist()
-            text_cols = final_df.select_dtypes(include=['object']).columns.tolist()
-            
-            if numeric_cols and text_cols:
-                st.subheader("📈 GRAPHICAL ANALYSIS :")
-                x_ax = text_cols[0]
-                # Target monthly_salary if present for chart mapping clarity
-                y_ax = 'monthly_salary' if 'monthly_salary' in numeric_cols else numeric_cols[0]
-                
-                fig = px.bar(
-                    final_df, 
-                    x=x_ax, 
-                    y=y_ax, 
-                    title=f"{y_ax} BY {x_ax}".upper(),
-                    template="plotly_dark",
-                    color=y_ax,
-                    color_continuous_scale="Viridis"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("ℹ️ The returned dataset structure does not contain a clear text/numeric pair to plot automatically.")
-                
-        elif final_df is not None and final_df.empty:
-            st.markdown("---")
-            st.subheader("📋 SQL QUERY GENERATED:")
-            st.code(executed_sql, language="sql")
-            st.warning("🦖 The query succeeded, but returned 0 rows. Your local SQLite text limits might be blocking exact keyword lookups.")
+    elif final_df is not None and final_df.empty:
+        st.markdown("---")
+        st.subheader("📋 GENERATED SQL QUERY:")
+        st.code(executed_sql, language="sql")
+        st.warning("0 rows returned. The query format is syntactically sound, but no specific rows inside your dataset match these constraints.")
