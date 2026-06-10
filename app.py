@@ -1,6 +1,11 @@
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import streamlit as st
 import plotly.express as px
-from src.agents import initialize_agentic_chat  # Direct import
+from src.agents import initialize_agentic_chat
 from src import core
 
 st.set_page_config(page_title="JobSeek - Intelligent Market Analyst", layout="wide")
