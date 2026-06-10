@@ -1,9 +1,13 @@
-# core.py
+# src/core.py
 import sqlite3
 import pandas as pd
 import google.generativeai as genai
+import os
 
-DB_PATH = "analytics.db"
+# Updated Path Logic: 
+# Go to the directory of this file (src), move up one level (..), then into 'data'
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+DB_PATH = os.path.join(DATA_DIR, "analytics.db")
 
 def configure_gemini_client(api_key: str):
     """Configures the global Gemini API connection state safely."""
@@ -20,16 +24,6 @@ def get_db_schema() -> str:
     if schema_info:
         return f"Table Context Structure:\n{schema_info[0][1]}"
     return "Error: Database table 'jobs' does not exist."
-
-def run_sql_query(sql_query: str):
-    """Executes SQL statements safely and returns a status flag with a DataFrame."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql_query(sql_query, conn)
-        conn.close()
-        return "SUCCESS", df
-    except Exception as err:
-        return "ERROR", str(err)
 
 def get_mock_query_mapping(user_query: str) -> tuple:
     """Provides instant local fallback query matches to bypass API limits during testing."""

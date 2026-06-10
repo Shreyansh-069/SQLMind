@@ -1,8 +1,7 @@
-# app.py
-import agents
-import core
-import plotly.express as px
 import streamlit as st
+import plotly.express as px
+from src.agents import initialize_agentic_chat  # Direct import
+from src import core
 
 st.set_page_config(page_title="JobSeek - Intelligent Market Analyst", layout="wide")
 st.title("📊 JobSeek - Intelligent Market Analyst")
@@ -32,7 +31,7 @@ with st.sidebar:
     if user_api_key and st.session_state["agent_session"] is None:
         core.configure_gemini_client(user_api_key)
         # Spin up the stateful system agent
-        st.session_state["agent_session"] = agents.initialize_agentic_chat(schema_blueprint)
+        st.session_state["agent_session"] = initialize_agentic_chat(schema_blueprint)
         st.success("✅ Agent Session Online with Memory!")
 
     st.markdown("---")
