@@ -4,9 +4,10 @@ import sqlite3
 import pandas as pd
 
 
-def run_ingestion_pipeline(
-    source_csv="india_job_market_2024_2026.csv", target_db="analytics.db"
-):
+def run_ingestion_pipeline():
+    DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+    source_csv = os.path.join(DATA_DIR, "india_job_market_2024_2026.csv")
+    target_db = os.path.join(DATA_DIR, "analytics.db")
     print("🚀 Ingesting your new India Job Market dataset...")
 
     if not os.path.exists(source_csv):
