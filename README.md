@@ -2,7 +2,7 @@
 
 JobSeek-AI is an agentic data analysis tool designed to provide deep insights into the Indian job market. By leveraging Google Gemini’s function-calling capabilities and a local SQLite engine, the system enables users to query complex job datasets using natural language.
 
-**Access the live application here:** [https://jobseek-ai.streamlit.app](https://jobseek-ai.streamlit.app)
+**Access the live application here:** [https://jobseek-ai.streamlit.app](https://jobseek-1ai.streamlit.app)
 
 ---
 
